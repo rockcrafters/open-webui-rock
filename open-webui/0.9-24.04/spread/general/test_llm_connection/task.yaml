@@ -1,0 +1,56 @@
+summary: End-to-end chat completion through Open WebUI to Ollama (qwen2:0.5b)
+
+details: |
+  Sends a chat completion request through Open WebUI's API, which proxies
+  the request to the Ollama backend running qwen2:0.5b. Verifies that:
+  - The request is accepted (HTTP 200)
+  - The response contains at least one choice
+  - The assistant's reply content is a non-empty string
+
+  The full path exercised:
+    curl → Open WebUI /api/chat/completions
+         → Open WebUI OpenAI proxy (/openai/... internal route)
+         → Ollama /v1/chat/completions (qwen2:0.5b)
+         → model inference
+         → response propagated back through Open WebUI
+
+  qwen2:0.5b is used because it is tiny (~352 MB) and fits comfortably
+  in the spread CI VM's disk constraints, while still validating the
+  full inference path.
+
+execute: |
+  # Sign in to obtain a JWT token
+  TOKEN=$(curl -sf -X POST http://localhost:8080/api/v1/auths/signin \
+    -H "Content-Type: application/json" \
+    -d '{"email":"admin@spread.test","password":"SpreadTest1234!"}' \
+    | jq -r '.token')
+  test -n "${TOKEN}" && test "${TOKEN}" != "null"
+
+  # Discover the first available model (provided by Ollama via qwen2:0.5b)
+  MODEL_ID=$(curl -sf http://localhost:8080/api/models \
+    -H "Authorization: Bearer ${TOKEN}" \
+    | jq -r '.data[0].id')
+  echo "Using model: ${MODEL_ID}"
+  test -n "${MODEL_ID}" && test "${MODEL_ID}" != "null"
+
+  # Send a minimal chat completion request
+  COMPLETION_RESP=$(curl -sf -X POST http://localhost:8080/api/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -d "{
+      \"model\": \"${MODEL_ID}\",
+      \"messages\": [
+        {\"role\": \"user\", \"content\": \"Reply with exactly the word: PONG\"}
+      ],
+      \"max_tokens\": 16,
+      \"temperature\": 0
+    }")
+  echo "Completion response: ${COMPLETION_RESP}"
+
+  # Must return at least one choice
+  echo "${COMPLETION_RESP}" | jq -e '.choices | type == "array" and length > 0'
+
+  # The assistant content must be a non-empty string
+  CONTENT=$(echo "${COMPLETION_RESP}" | jq -r '.choices[0].message.content')
+  echo "Assistant reply: ${CONTENT}"
+  test -n "${CONTENT}" && test "${CONTENT}" != "null"

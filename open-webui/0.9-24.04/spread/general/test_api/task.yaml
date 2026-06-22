@@ -1,0 +1,40 @@
+summary: Open WebUI REST API returns version, config, and auth info
+
+details: |
+  Smoke-tests the REST API:
+  - GET /api/version  — returns the WebUI version string (no auth)
+  - GET /api/config   — returns the public runtime config (no auth)
+  - POST /api/v1/auths/signin  — admin login returns a JWT token
+  - GET /api/v1/auths/  — authenticated request returns current user info
+
+execute: |
+  # ── Unauthenticated endpoints ────────────────────────────────────────────
+
+  # /api/version must return a JSON object with a non-empty 'version' field
+  VERSION_RESP=$(curl -sf http://localhost:8080/api/version)
+  echo "Version response: ${VERSION_RESP}"
+  echo "${VERSION_RESP}" | jq -e '.version | type == "string" and length > 0'
+
+  # /api/config must return a JSON object
+  CONFIG_RESP=$(curl -sf http://localhost:8080/api/config)
+  echo "Config response (first 200 chars): ${CONFIG_RESP:0:200}"
+  echo "${CONFIG_RESP}" | jq -e '. | type == "object"'
+
+  # ── Authenticated sign-in ────────────────────────────────────────────────
+
+  # Sign in with the admin account created during suite prepare
+  SIGNIN_RESP=$(curl -sf -X POST http://localhost:8080/api/v1/auths/signin \
+    -H "Content-Type: application/json" \
+    -d '{"email":"admin@spread.test","password":"SpreadTest1234!"}')
+  echo "Sign-in response (first 100 chars): ${SIGNIN_RESP:0:100}"
+
+  # Must return a non-empty JWT token
+  TOKEN=$(echo "${SIGNIN_RESP}" | jq -r '.token')
+  test -n "${TOKEN}" && test "${TOKEN}" != "null"
+  echo "Obtained auth token (length=${#TOKEN})"
+
+  # Authenticated GET /api/v1/auths/ must return current user info
+  AUTH_RESP=$(curl -sf http://localhost:8080/api/v1/auths/ \
+    -H "Authorization: Bearer ${TOKEN}")
+  echo "Auth user info: ${AUTH_RESP}"
+  echo "${AUTH_RESP}" | jq -e '.email == "admin@spread.test"'

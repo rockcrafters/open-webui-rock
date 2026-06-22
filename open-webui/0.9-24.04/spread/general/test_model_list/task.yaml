@@ -1,0 +1,31 @@
+summary: Open WebUI discovers models from Ollama via OpenAI passthrough
+
+details: |
+  Verifies that Open WebUI successfully proxies to the Ollama backend's
+  OpenAI-compatible API (configured in suite prepare via
+  POST /openai/config/update) and that at least one model appears in the
+  model list returned by GET /api/models.
+
+  This tests the full OpenAI-passthrough integration path:
+    Ollama (qwen2:0.5b) → Open WebUI OpenAI proxy → /api/models response.
+
+execute: |
+  # Sign in to obtain a JWT token
+  TOKEN=$(curl -sf -X POST http://localhost:8080/api/v1/auths/signin \
+    -H "Content-Type: application/json" \
+    -d '{"email":"admin@spread.test","password":"SpreadTest1234!"}' \
+    | jq -r '.token')
+  test -n "${TOKEN}" && test "${TOKEN}" != "null"
+
+  # Fetch the model list from Open WebUI
+  MODELS_RESP=$(curl -sf http://localhost:8080/api/models \
+    -H "Authorization: Bearer ${TOKEN}")
+  echo "Models response: ${MODELS_RESP:0:300}"
+
+  # Must return a JSON object with a 'data' array containing at least one model
+  echo "${MODELS_RESP}" | jq -e '.data | type == "array" and length > 0'
+
+  # Extract and display the first model ID for logging
+  FIRST_MODEL=$(echo "${MODELS_RESP}" | jq -r '.data[0].id')
+  echo "First model ID: ${FIRST_MODEL}"
+  test -n "${FIRST_MODEL}" && test "${FIRST_MODEL}" != "null"

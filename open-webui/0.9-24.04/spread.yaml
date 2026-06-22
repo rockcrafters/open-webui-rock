@@ -1,0 +1,116 @@
+project: open-webui
+
+backends:
+  craft:
+    type: craft
+    systems:
+      - ubuntu-24.04:
+      #- ubuntu-22.04:
+
+suites:
+  spread/general/:
+    summary: Open WebUI integration tests
+
+    prepare: |
+      # ── Install tooling ──────────────────────────────────────────────────
+      sudo snap install docker
+      sudo snap install --classic rockcraft
+
+      # Install tools needed throughout this suite.
+      # curl and jq are pre-installed on Ubuntu 24.04 runners but we pin
+      # them explicitly to avoid any environment variance.
+      sudo apt-get install --yes retry curl jq
+
+      # Wait for Docker daemon to come online
+      retry --times=10 --delay=2 -- docker images
+
+      # ── Load the rock into Docker ────────────────────────────────────────
+      sudo rockcraft.skopeo --insecure-policy copy \
+        "oci-archive:${CRAFT_ARTIFACT}" \
+        docker-daemon:open-webui:test
+
+      # ── Install Ollama (via install script, not snap) ─────────────────────
+      # The ollama snap is 1.89 GB and the qwen3 snap requires 10 GiB free
+      # disk space — both exceed what the spread CI VM provides (~8.9 GiB).
+      # Instead we install the Ollama CLI/daemon via its official install
+      # script (~100 MB binary) and pull qwen2:0.5b (~352 MB), which fits
+      # comfortably. Open WebUI is configured to use Ollama via the OpenAI-
+      # compatible /v1 API after startup.
+      curl -fsSL https://ollama.com/install.sh | sudo sh
+
+      # Start the Ollama daemon (the install script registers a systemd unit)
+      sudo systemctl start ollama || true
+      sleep 3
+
+      # Pull qwen2:0.5b — a tiny 352 MB model suitable for CI
+      retry --times=3 --delay=5 -- ollama pull qwen2:0.5b
+
+      # Wait for Ollama to confirm the model is available
+      retry --times=10 --delay=3 -- \
+        bash -c 'curl -sf http://localhost:11434/api/tags | grep -q qwen2'
+
+      OLLAMA_URL="http://localhost:11434/v1"
+      echo "Ollama OpenAI-compat URL: ${OLLAMA_URL}"
+
+      # ── Start the Open WebUI container ───────────────────────────────────
+      # --network=host lets the container reach Ollama on localhost.
+      # No volume mount for /app/backend/data: using a host-mounted volume
+      # causes root-owned subdirectories which ChromaDB (running as UID 584792)
+      # cannot write to. For CI tests, ephemeral in-container storage is fine.
+      docker run -d \
+        --name open-webui-test \
+        --network=host \
+        -e WEBUI_SECRET_KEY="spread-test-secret-key" \
+        -e USE_SLIM_DOCKER="true" \
+        open-webui:test
+
+      # Wait for Open WebUI to pass its own health check.
+      # Open WebUI imports torch + chromadb + many ML libs; allow up to
+      # 10 minutes on a cold CI runner (120 × 5 s = 600 s).
+      retry --times=120 --delay=5 -- \
+        bash -c 'curl -sf http://localhost:8080/health | jq -e ".status == true" > /dev/null'
+
+      # ── Bootstrap the first admin user ───────────────────────────────────
+      # Open WebUI requires signup before any authenticated endpoint works.
+      curl -sf -X POST http://localhost:8080/api/v1/auths/signup \
+        -H "Content-Type: application/json" \
+        -d '{"email":"admin@spread.test","password":"SpreadTest1234!","name":"Spread Admin"}' \
+        | jq -e '.token' > /dev/null
+
+      # ── Configure the Ollama/OpenAI connection ───────────────────────────
+      # In Open WebUI 0.9.x the OPENAI_API_BASE_URL env var is not sufficient
+      # to activate the OpenAI proxy at runtime — the connection must also be
+      # enabled and pointed at Ollama via the admin API.
+      ADMIN_TOKEN=$(curl -sf -X POST http://localhost:8080/api/v1/auths/signin \
+        -H "Content-Type: application/json" \
+        -d '{"email":"admin@spread.test","password":"SpreadTest1234!"}' \
+        | jq -r '.token')
+
+      curl -sf -X POST "http://localhost:8080/openai/config/update" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"ENABLE_OPENAI_API\": true,
+          \"OPENAI_API_BASE_URLS\": [\"${OLLAMA_URL}\"],
+          \"OPENAI_API_KEYS\": [\"not-required\"],
+          \"OPENAI_API_CONFIGS\": {}
+        }" | jq -e '.ENABLE_OPENAI_API == true' > /dev/null
+
+      # Verify at least one model is now visible
+      retry --times=6 --delay=3 -- \
+        bash -c "curl -sf http://localhost:8080/api/models \
+          -H 'Authorization: Bearer ${ADMIN_TOKEN}' \
+          | jq -e '.data | length > 0' > /dev/null"
+
+    restore: |
+      docker stop open-webui-test 2>/dev/null || true
+      docker rm open-webui-test 2>/dev/null || true
+      docker image rm --force open-webui:test 2>/dev/null || true
+      sudo systemctl stop ollama 2>/dev/null || pkill ollama 2>/dev/null || true
+
+exclude:
+  - .git
+
+# Generous timeout: Ollama install + model pull + WebUI startup (ML imports
+# take 3-5 min) + all test tasks on a cold runner.
+kill-timeout: 45m

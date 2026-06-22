@@ -1,0 +1,7 @@
+version: 1
+ghcr:
+  upload: true
+  cve-scan: true
+
+images:
+  - directory: "*"

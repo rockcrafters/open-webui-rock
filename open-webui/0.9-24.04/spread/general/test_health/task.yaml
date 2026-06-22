@@ -1,0 +1,15 @@
+summary: Open WebUI health endpoint returns status true
+
+details: |
+  Verifies that the Pebble-managed open-webui service started successfully
+  and the FastAPI health endpoint at /health responds with {"status": true}.
+  This is the minimum liveness check — it must pass before any other test
+  is meaningful.
+
+execute: |
+  # The health endpoint requires no authentication
+  RESPONSE=$(curl -sf http://localhost:8080/health)
+  echo "Health response: ${RESPONSE}"
+
+  # Verify .status == true
+  echo "${RESPONSE}" | jq -e '.status == true'

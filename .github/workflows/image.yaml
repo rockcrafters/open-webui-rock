@@ -1,0 +1,56 @@
+name: Build and Publish Rocks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    name: Prepare build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      rock-matrix: ${{ steps.read-config.outputs.rock-matrix }}
+      upload-matrix: ${{ steps.read-config.outputs.upload-matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read CI config
+        id: read-config
+        uses: canonical/oci-factory/.github/actions/read-ci-config@main
+        with:
+          ci-config-path: .github/ci.yaml
+
+  build:
+    name: Build rock
+    needs: prepare
+    uses: canonical/oci-factory/.github/workflows/Build-Rock.yaml@main
+    with:
+      rock-matrix: ${{ needs.prepare.outputs.rock-matrix }}
+    secrets:
+      REPO_CLONER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: Run Spread tests
+    needs: [prepare, build]
+    uses: canonical/oci-factory/.github/workflows/Test-Rock.yaml@main
+    with:
+      rock-matrix: ${{ needs.prepare.outputs.rock-matrix }}
+    secrets:
+      REPO_CLONER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-ghcr:
+    name: Upload to GHCR
+    needs: [prepare, build, test]
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+    uses: canonical/oci-factory/.github/workflows/Upload-Rock.yaml@main
+    with:
+      upload-matrix: ${{ needs.prepare.outputs.upload-matrix }}
+      registry: ghcr.io
+      image-name: ${{ github.repository }}
+    secrets:
+      REGISTRY_USERNAME: ${{ github.actor }}
+      REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}

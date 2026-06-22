@@ -1,0 +1,14 @@
+# Rock build artefacts
+*.rock
+
+# OS files
+.DS_Store
+
+# Spread
+.craft-spread*/
+.spread-reuse*
+
+# IDE
+.vscode/
+.vs_code/
+.idea/
