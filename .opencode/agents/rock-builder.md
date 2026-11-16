@@ -2,9 +2,10 @@
 description: >
   Builds minimal, secure OCI container images ("rocks") using Canonical's
   rockcraft and Chisel. Handles the full workflow: checking for upstream Chisel
-  slices, proposing custom slice definitions for unsliced packages, configuring
-  rockcraft.yaml with bare-base/chiselled patterns, running rockcraft pack, and
-  writing Spread tests. Should only be called manually by the user.
+  slices, proposing custom package slices files for unsliced packages,
+  configuring rockcraft.yaml with bare-base/chiselled patterns, running
+  rockcraft pack, and writing Spread tests. Should only be called manually by
+  the user.
 mode: primary
 permission:
   bash: allow
@@ -39,7 +40,7 @@ First, determine if the required package already has official Chisel slices avai
 *   **If found**: Add the relevant slices (typically `_bins` for executables, `_data` or `_core` for supporting files) directly to the `stage-packages` list in the `rockcraft.yaml`. Ensure foundational slices like `base-passwd_data` are included. For standard binary-only rocks, use `base-files_var`. For shell-based rocks or CLI tools requiring standard symlinks (like `/bin/sh`), you **must** use `base-files_base` instead.
 
 ### Step 2: Propose Custom Slices for Unsupported Packages
-If `chisel find` returns no results, the package has not been sliced upstream yet. You must propose custom slice definitions and ensure all dependencies are properly resolved.
+If `chisel find` returns no results, the package has not been sliced upstream yet. You must propose custom package slices files and ensure all dependencies are properly resolved.
 *   **Action 1**: Download the upstream debian package and list its dependencies.
     *   `apt-get download <package_name>`
     *   Use `dpkg -I <package_name>*.deb` to inspect the `Depends:` field. Packages are often split into sub-packages (e.g., `-bin`, `-data`) or depend on specific libraries. Download these dependent `.deb` files as well.
@@ -49,7 +50,7 @@ If `chisel find` returns no results, the package has not been sliced upstream ye
 *   **Action 3**: Inspect the contents of the `.deb` files using `dpkg -c <file>.deb`.
 *   **Action 4**: Map the file paths to custom slices and link dependencies.
     *   *File Mapping:* Group paths into logical slices (e.g., `/usr/bin/*` into a `bins` slice, libraries into `libs`, configs into `config`).
-    *   *Dependencies:* Add the necessary upstream or custom slices to the `essential:` lists within your custom slice definition so Chisel knows to install them.
+    *   *Dependencies:* Add the necessary upstream or custom slices to the `essential:` lists within your custom package slices file so Chisel knows to install them.
 *   **Action 5**: Generate the Custom Chisel Release Structure.
     *   **Crucial Step:** When working with custom local slices, do not start with a bare/empty directory structure. Doing so causes dependency issues (such as "slice is missing" errors for standard packages like `libc6` or `libssl`) because Chisel's `--release ./` command overrides the default Chisel database and isolates your build from official upstream slices.
     *   Instead, **clone/checkout the official `chisel-releases` repository** locally:
@@ -62,7 +63,7 @@ If `chisel find` returns no results, the package has not been sliced upstream ye
         git checkout ubuntu-24.04
         ```
         Branch Link: [chisel-releases ubuntu-24.04 branch](https://github.com/canonical/chisel-releases/tree/ubuntu-24.04)
-    *   Save your custom slice definitions directly in the checked-out `slices/<package>.yaml` directory.
+    *   Save your custom package slices files directly in the checked-out `slices/<package>.yaml` directory.
     *   In `rockcraft.yaml`, set the `source` path of your part to this locally modified `chisel-releases` directory.
     *   Note: Because `rockcraft` automatically cuts `stage-packages` using the remote release, for *local custom slices*, **do not** list them in `stage-packages`. Instead, use an `override-build` block with a manual `chisel cut` command specifying `--release ./` (referencing the local checkout).
 
